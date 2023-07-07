@@ -2,7 +2,7 @@ mod handler;
 mod model;
 mod response;
 
-use model::{DB};
+use model::DB;
 use warp::{Filter, Rejection};
 
 type WebResult<T> = std::result::Result<T, Rejection>;
