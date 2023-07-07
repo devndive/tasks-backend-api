@@ -2,21 +2,19 @@ mod handler;
 mod model;
 mod response;
 
+use handler::{health_check_handler, tasks_list_handler, create_task_handler, edit_task_handler, delete_task_handler};
 use model::DB;
-use warp::{Filter, Rejection};
 
-type WebResult<T> = std::result::Result<T, Rejection>;
+use axum::{
+    routing::{get, post, patch},
+    Router,
+};
 
 #[tokio::main]
 async fn main() {
-    if std::env::var_os("RUST_LOG").is_none() {
-        std::env::set_var("RUST_LOG", "api=info");
-    }
+    let shared_state = model::task_db();
 
-    pretty_env_logger::init();
-
-    let db = model::task_db();
-
+    /*
     let health_check = warp::path!("api" / "health_check")
         .and(warp::get())
         .and_then(handler::health_check_handler);
@@ -63,8 +61,20 @@ async fn main() {
 
     println!("🚀 Server started successfully");
     warp::serve(routes).run(([0, 0, 0, 0], 8000)).await;
-}
+    */
 
-fn with_db(db: DB) -> impl Filter<Extract = (DB,), Error = std::convert::Infallible> + Clone {
-    warp::any().map(move || db.clone())
+    // let health_check = warp::path!("api" / "health_check")
+    //    .and(warp::get())
+    //    .and_then(handler::health_check_handler);
+    let app = Router::new()
+        .route("/api/health_check", get(health_check_handler))
+        .route("/api/tasks", get(tasks_list_handler))
+        .route("/api/tasks", post(create_task_handler))
+        .route("/api/tasks/:id", patch(edit_task_handler).delete(delete_task_handler))
+        .with_state(shared_state);
+
+    axum::Server::bind(&"0.0.0.0:8000".parse().unwrap())
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
 }
