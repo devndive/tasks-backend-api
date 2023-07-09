@@ -1,130 +1,84 @@
 use crate::{
-    response::{GenericResponse, TaskListResponse, SingleTaskResponse, TaskData},
-    WebResult, model::{Task, DB, TaskAdd, TaskUpdate}
+    response::{TaskListResponse, SingleTaskResponse, TaskData},
+    model::{Task, DB, TaskAdd, TaskUpdate}
 };
+
+use axum::{Json, extract::{State, Path}, response::IntoResponse, http::StatusCode};
+use serde_json::{Value, json};
 
 use chrono::prelude::*;
 use uuid::Uuid;
-use warp::{reply::{json, with_status}, Reply, hyper::StatusCode};
 
-pub async fn health_check_handler() -> WebResult<impl Reply> {
+pub async fn health_check_handler() -> Json<Value> {
     const MESSAGE: &str = "Healthy, wooot?";
 
-    let response = &GenericResponse {
-        status: "success".to_string(),
-        message: MESSAGE.to_string(),
-    };
-
-    Ok(json(&response))
+    Json(json!({
+        "status": "success".to_string(),
+        "message": MESSAGE.to_string(),
+    }))
 }
 
-pub async fn tasks_list_handler(db: DB) -> WebResult<impl Reply> {
-    let tasks = db.lock().await;
+pub async fn tasks_list_handler(
+    State(state): State<DB>
+) -> Json<TaskListResponse> {
+    let tasks = state.lock().await;
 
     let tasks: Vec<Task> = tasks
         .clone()
         .into_iter()
         .collect();
 
-    let response = TaskListResponse{
-        status: "susscess".to_string(),
+    let response = TaskListResponse {
+        status: "success".to_string(),
         results: tasks.len(),
-        tasks,
+        tasks
     };
 
-    Ok(json(&response))
+    Json(response)
 }
 
-pub async fn create_todo_handler(body: TaskAdd, db: DB) -> WebResult<impl Reply> {
-    let mut tasks = db.lock().await;
-
-    /*
-    let task_already_exists = tasks.iter().any(|task| {
-        task.name == body.name
-    });
-    */
-
-    /*
-    if task_already_exists {
-        return Ok(
-            with_status(
-                json(
-                    &GenericResponse {
-                        status: "fail".to_string(),
-                        message: format!("Todo with name '{}' already exists", body.name)
-                    }
-                )
-            , StatusCode::CONFLICT)
-        );
-    }
-    */
+pub async fn create_task_handler(
+    State(state): State<DB>,
+    Json(payload): Json<TaskAdd>,
+) -> (StatusCode, Json<SingleTaskResponse>) {
+    let mut tasks = state.lock().await;
 
     let now = Utc::now();
 
     let new_task = Task {
         id: Uuid::new_v4().to_string(),
-        name: body.name,
-        created_by: body.created_by,
+        name: payload.name,
+        created_by: payload.created_by,
         created_on: now,
-        due_date: body.due_date,
+        due_date: payload.due_date,
         is_over_due: false,
         is_completed: false,
-        assigned_to: body.assigned_to,
+        assigned_to: payload.assigned_to,
     };
 
     tasks.push(new_task.clone());
 
     let response = SingleTaskResponse {
         status: "success".to_string(),
-        data: TaskData { task: new_task },
+        data: TaskData { task: new_task.clone() }
     };
 
-    Ok(with_status(json(&response), StatusCode::CREATED))
+    (StatusCode::CREATED, Json(response))
 }
 
-pub async fn get_todo_handler(id: String, db: DB) -> WebResult<impl Reply> {
-    let vec = db.lock().await;
-
-    let task = vec.iter().find(|t| {
-        t.id.eq(&id)
-    });
-
-    if task.is_none() {
-        let response = GenericResponse {
-            status: "fail".to_string(),
-            message: format!("Task with ID {id} not found"),
-        };
-
-        return Ok(with_status(json(&response), StatusCode::NOT_FOUND));
-    }
-
-    let response = SingleTaskResponse {
-        status: "success".to_string(),
-        data: TaskData { task: task.unwrap().clone() },
-    };
-
-    return Ok(
-        with_status(
-            json(&response),
-            StatusCode::OK
-        )
-    );
-}
-
-pub async fn edit_task_handler(id: String, body: TaskUpdate, db: DB) -> WebResult<impl Reply> {
-    let mut tasks = db.lock().await;
+pub async fn edit_task_handler(
+    Path(task_id): Path<String>,
+    State(state): State<DB>,
+    Json(payload): Json<TaskUpdate>,
+) -> Result<impl IntoResponse, StatusCode> {
+    let mut tasks = state.lock().await;
 
     let task = tasks.iter_mut().find(|t| {
-        t.id.eq(&id)
+        t.id.eq(&task_id)
     });
 
     if task.is_none() {
-        let response = GenericResponse {
-            status: "fail".to_string(),
-            message: format!("Task with ID {id} not found"),
-        };
-
-        return Ok(with_status(json(&response), StatusCode::NOT_FOUND));
+        Err(StatusCode::NOT_FOUND)
     } else {
         let task = task.unwrap();
 
@@ -134,51 +88,29 @@ pub async fn edit_task_handler(id: String, body: TaskUpdate, db: DB) -> WebResul
             created_by: task.created_by.clone(),
             created_on: task.created_on,
 
-            name: body.name.unwrap_or(task.name.clone()),
-            is_completed: body.is_completed.unwrap_or(task.is_completed),
-            assigned_to: body.assigned_to.unwrap_or(task.assigned_to.clone()),
-            due_date: body.due_date.unwrap_or(task.due_date),
+            name: payload.name.unwrap_or(task.name.clone()),
+            is_completed: payload.is_completed.unwrap_or(task.is_completed),
+            assigned_to: payload.assigned_to.unwrap_or(task.assigned_to.clone()),
+            due_date: payload.due_date.unwrap_or(task.due_date),
         };
 
         *task = updated_task;
 
-        let response = SingleTaskResponse {
-            status: "success".to_string(),
-            data: TaskData { task: task.clone() }
-        };
-
-        return Ok(
-            with_status(
-                json(&response),
-                StatusCode::OK
-            )
-        );
+        Ok(Json(task.clone()))
     }
 }
-pub async fn delete_task_handler(id: String, db: DB) -> WebResult<impl Reply> {
-    let mut tasks = db.lock().await;
+pub async fn delete_task_handler(
+    Path(task_id): Path<String>,
+    State(state): State<DB>,
+) -> impl IntoResponse {
+    let mut tasks = state.lock().await;
 
     let length_before_deletion = tasks.len();
-    tasks.retain(|t| t.id != id);
+    tasks.retain(|t| !t.id.eq(&task_id));
 
     if length_before_deletion == tasks.len() {
-        let response = GenericResponse {
-            status: "fail".to_string(),
-            message: format!("Task with ID {id} not found"),
-        };
-
-        return Ok(
-            with_status(
-                json(&response),
-                StatusCode::NOT_FOUND
-            )
-        );
+        StatusCode::NOT_FOUND
     } else {
-        return Ok(
-            with_status(
-                json(&""),
-                StatusCode::NO_CONTENT
-            )
-        );
+        StatusCode::NO_CONTENT
     }
 }
