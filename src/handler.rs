@@ -1,5 +1,5 @@
 use crate::{
-    response::{GenericResponse, TaskListResponse, SingleTaskResponse, TaskData},
+    response::{TaskListResponse, SingleTaskResponse, TaskData},
     model::{Task, DB, TaskAdd, TaskUpdate}
 };
 
@@ -20,7 +20,7 @@ pub async fn health_check_handler() -> Json<Value> {
 
 pub async fn tasks_list_handler(
     State(state): State<DB>
-) -> Json<Value> {
+) -> Json<TaskListResponse> {
     let tasks = state.lock().await;
 
     let tasks: Vec<Task> = tasks
@@ -28,18 +28,19 @@ pub async fn tasks_list_handler(
         .into_iter()
         .collect();
 
-    Json(json!({
-        "status": "susscess".to_string(),
-        "results": tasks.len(),
-        "tasks": tasks
+    let response = TaskListResponse {
+        status: "success".to_string(),
+        results: tasks.len(),
+        tasks
+    };
 
-    }))
+    Json(response)
 }
 
 pub async fn create_task_handler(
     State(state): State<DB>,
     Json(payload): Json<TaskAdd>,
-) -> (StatusCode, Json<Task>) {
+) -> (StatusCode, Json<SingleTaskResponse>) {
     let mut tasks = state.lock().await;
 
     let now = Utc::now();
@@ -57,7 +58,12 @@ pub async fn create_task_handler(
 
     tasks.push(new_task.clone());
 
-    (StatusCode::CREATED, Json(new_task))
+    let response = SingleTaskResponse {
+        status: "success".to_string(),
+        data: TaskData { task: new_task.clone() }
+    };
+
+    (StatusCode::CREATED, Json(response))
 }
 
 pub async fn edit_task_handler(
@@ -89,13 +95,6 @@ pub async fn edit_task_handler(
         };
 
         *task = updated_task;
-
-        /*
-        let response = SingleTaskResponse {
-            status: "success".to_string(),
-            data: TaskData { task: task.clone() }
-        };
-        */
 
         Ok(Json(task.clone()))
     }
